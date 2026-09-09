@@ -7,4 +7,5 @@ __pycache__/
 api/__pycache__/
 runs/
 *.pt
+!models/best.pt
 .ipynb_checkpoints/
