@@ -1,0 +1,23 @@
+# data.yaml -- points Ultralytics at your re-split dataset.
+# Paths are relative to this file's location once you run split_dataset.py.
+# Update `path` to the absolute path on YOUR machine/Colab before training.
+
+path: ./data/split       # root dir containing train/, val/, test/
+train: train/images
+val: val/images
+test: test/images
+
+# Class map -- MUST match the order in your Roboflow export's data.yaml / classes.txt.
+# Verify this against the actual export before training; if these indices are
+# wrong your model trains against the wrong labels and every metric is meaningless.
+names:
+  0: Hardhat
+  1: Mask
+  2: NO-Hardhat
+  3: NO-Mask
+  4: NO-Safety Vest
+  5: Person
+  6: Safety Cone
+  7: Safety Vest
+  8: machinery
+  9: vehicle
