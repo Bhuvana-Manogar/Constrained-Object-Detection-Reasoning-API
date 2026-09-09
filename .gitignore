@@ -1,0 +1,10 @@
+data/raw/
+data/split/
+*.zip
+*.zip.*
+*.kaggle-partial
+__pycache__/
+api/__pycache__/
+runs/
+*.pt
+.ipynb_checkpoints/

@@ -19,7 +19,12 @@ prohibits it anyway.
 import re
 from typing import List, Dict, Tuple
 
-from api.detector import detect
+# NOTE: detector.py imports ultralytics/torch, which are heavy dependencies.
+# We import it lazily (inside answer_question, not here at module load time)
+# so that needs_detection() and reason_over_detections() -- the pure decision
+# logic -- can be tested and defended independently of having the ML stack
+# installed. This is also just better separation of concerns: the reasoning
+# rules don't actually need to know HOW detection happens, only that it does.
 
 # --- 1. INTENT ROUTING -------------------------------------------------
 # Plain keyword/heuristic classifier. This is intentionally simple and
@@ -117,6 +122,8 @@ def reason_over_detections(question: str, detections: List[Dict]) -> Tuple[str, 
 
 # --- 3. CONFIDENCE GUARDRAIL --------------------------------------------
 def answer_question(question: str, image_path: str) -> Dict:
+    from api.detector import detect  # lazy import -- see note at top of file
+
     if not needs_detection(question):
         return {
             "used_detector": False,
