@@ -90,11 +90,26 @@ def reason_over_detections(question: str, detections: List[Dict]) -> Tuple[str, 
         return f"Found {len(matches)} instance(s) matching '{target}'.", True
 
     # "is anyone not wearing a helmet/hardhat" -- the brief's own example question
+    #
+    # SYNONYM MAPPING (defend this if asked): the dataset's ontology uses
+    # "Hardhat" as the class name, but a real user/evaluator may say
+    # "helmet" instead. Without this mapping, asking about a "helmet"
+    # would fail to match any class name and silently fall back to
+    # checking ALL violation types at once -- a real bug I found by
+    # testing the live API myself (see memo). This dict is the fix.
+    PPE_SYNONYMS = {
+        "NO-Hardhat": ["hardhat", "hard hat", "helmet", "hard-hat"],
+        "NO-Safety Vest": ["safety vest", "vest", "hi-vis", "hi vis"],
+        "NO-Mask": ["mask", "face mask", "facemask"],
+    }
     if "not wearing" in q or ("is anyone" in q and ("without" in q or "no " in q)):
-        violation_classes = [c for c in ["NO-Hardhat", "NO-Safety Vest", "NO-Mask"]
-                              if c.lower().replace("no-", "no ") in q or c.lower() in q
-                              or c.split("-")[1].lower() in q]
+        violation_classes = [
+            violation_class
+            for violation_class, synonyms in PPE_SYNONYMS.items()
+            if any(word in q for word in synonyms)
+        ]
         if not violation_classes:
+            # Question didn't name a specific PPE type -- check all of them.
             violation_classes = ["NO-Hardhat", "NO-Safety Vest", "NO-Mask"]
         found = [d for d in trustworthy if d["class"] in violation_classes]
         if found:

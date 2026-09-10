@@ -3,123 +3,116 @@
 RT-DETR fine-tuned on construction-site PPE compliance, exposed via FastAPI,
 with a hand-written natural-language reasoning layer on top.
 
-## 1. Dataset
+**Status: trained, evaluated, and tested live end-to-end.** See
+`MEMO_HUMANIZED.md` for the full writeup with real results.
+
+## 1. Real results (from actual training + evaluation)
+
+- **mAP50: 0.9048, mAP50-95: 0.6624** on a held-out test split (278 images)
+- Trained: RT-DETR-l, 100 epochs, 640px, batch 16, Tesla T4, 251.2 minutes
+- Weakest class: Safety Cone (0.764 AP50, 0.637 recall) -- see memo Section 4
+  for root-cause analysis
+- Full training log with all epoch output: `notebooks/train_on_colab.ipynb`
+  (rendered directly on GitHub)
+- Confusion matrix + PR/P/R/F1 curves: `results/`
+- Trained weights: `models/best.pt` (66.3MB, tracked in git)
+
+## 2. Dataset
 
 **Construction Site Safety Image Dataset** (Roboflow Universe, mirrored on
-Kaggle by snehilsanyal). ~2,800 images, 10 classes:
+Kaggle by snehilsanyal). 2,801 images, 10 classes:
 `Hardhat, Mask, NO-Hardhat, NO-Mask, NO-Safety Vest, Person, Safety Cone,
 Safety Vest, machinery, vehicle`.
 
-Download it, export in YOLOv8/YOLO-txt format, and place under:
-```
-data/raw/images/*.jpg
-data/raw/labels/*.txt
-```
+Re-split 75/15/10 (own stratified split, not the dataset's shipped one) --
+see `src/split_dataset.py` and memo Section 2 for reasoning.
 
-## 2. Setup
+## 3. Setup
 
 ```bash
 pip install -r requirements.txt
+pip install "numpy<2"   # required: ultralytics/opencv needs NumPy 1.x
 ```
 
-Record your actual environment for reproducibility:
-```bash
-pip freeze > environment_lock.txt
-nvidia-smi > gpu_info.txt   # or note "CPU only" / Colab GPU tier
-```
-
-## 3. Split, train, evaluate
+## 4. Reproducing training
 
 ```bash
 python src/split_dataset.py --source data/raw --dest data/split --seed 42
 python src/train.py --data data/data.yaml --epochs 100 --imgsz 640 --batch 16 --device 0
-python src/evaluate.py --weights runs/ppe_rtdetr/weights/best.pt --data data/data.yaml --split test
+python src/evaluate.py --weights models/best.pt --data data/data.yaml --split test
 ```
 
-No local GPU? Use `notebooks/train_on_colab.ipynb` -- push this repo to
-GitHub first, then clone it inside Colab.
-
-After training, copy the weights so the API can find them:
-```bash
-cp runs/ppe_rtdetr/weights/best.pt models/best.pt
-```
+No local GPU? Use `notebooks/train_on_colab.ipynb` in Google Colab --
+already contains the full run with real output, viewable directly on GitHub.
 
 ## 4. Run the API
 
 ```bash
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn api.main:app --reload
 ```
 
-### POST /detect
+Then either use curl, or open the interactive test UI in your browser at:
+```
+http://localhost:8000/docs
+```
+(Opening `http://localhost:8000/detect` or `/ask` directly in a browser
+will show "Not Found" / "Method Not Allowed" -- that's expected, since
+those are POST-only endpoints. Use `/docs` or curl instead.)
+
+### POST /detect -- real example, from the live API
 ```bash
-curl -X POST -F "image=@sample.jpg" -F "conf_threshold=0.3" http://localhost:8000/detect
+curl.exe -X POST -F "image=@data/split/test/images/youtube-824_jpg.rf.66d684a9888bb29ffe83793dd2ed3528.jpg" -F "conf_threshold=0.3" http://localhost:8000/detect
 ```
 ```json
-{
-  "detections": [
-    {"class": "Hardhat", "confidence": 0.91, "box": [120.0, 45.0, 210.0, 160.0]},
-    {"class": "NO-Safety Vest", "confidence": 0.67, "box": [300.0, 80.0, 400.0, 260.0]}
-  ]
-}
+{"detections":[{"class":"Person","confidence":0.9957,"box":[427.9,-0.2,640.0,409.1]},{"class":"NO-Safety Vest","confidence":0.9659,"box":[427.7,186.4,638.6,409.1]}, ...]}
 ```
 
-### POST /ask
+### POST /ask -- real example, confident answer
 ```bash
-curl -X POST -F "image=@sample.jpg" -F "question=Is anyone not wearing a helmet?" \
-     http://localhost:8000/ask
+curl.exe -X POST -F "image=@data/split/test/images/youtube-824_jpg.rf.66d684a9888bb29ffe83793dd2ed3528.jpg" -F "question=Is anyone not wearing a helmet?" http://localhost:8000/ask
 ```
 ```json
-{
-  "used_detector": true,
-  "answer": "Yes -- detected violation(s): NO-Hardhat (1 instance(s)).",
-  "confident": true,
-  "raw_detections": [...]
-}
+{"used_detector":true,"answer":"Yes -- detected violation(s): NO-Safety Vest (1 instance(s)).","confident":true, ...}
 ```
 
-Example of the confidence guardrail firing (low-confidence/empty detections):
+### POST /ask -- real example, guardrail firing (insufficient information)
+```bash
+curl.exe -X POST -F "image=@data/split/test/images/airport_inside_0073_jpg.rf.405ba1048616d99ee5168b6affb4938e.jpg" -F "question=Is anyone not wearing a safety vest?" http://localhost:8000/ask
+```
 ```json
-{
-  "used_detector": true,
-  "answer": "I don't have enough confident detection evidence to answer this reliably. (No sufficiently confident detections in this image.)",
-  "confident": false,
-  "raw_detections": []
-}
+{"used_detector":true,"answer":"I don't have enough confident detection evidence to answer this reliably. (No people detected in the image with sufficient confidence to answer.)","confident":false, ...}
 ```
 
-## 5. Things you must be able to defend verbally
+## 5. Docker (bonus)
 
-These are the exact decisions baked into this repo -- know the *why*, not
-just the *what*, for each:
+```bash
+docker compose up --build
+```
+
+## 6. Things to be able to defend verbally
 
 1. **Why this dataset/domain** -- non-COCO classes are structural
-   (presence/absence of PPE), not just relabeled COCO categories; real-world
-   deployment story (compliance monitoring).
-2. **Why 75/15/10, stratified by rarest class per image** (`split_dataset.py`
-   docstring) -- rather than the dataset's shipped split.
+   (presence/absence of PPE), not just relabeled COCO categories.
+2. **Why 75/15/10, stratified by rarest class per image** -- rather than
+   the dataset's shipped split.
 3. **Why fine-tune from COCO-pretrained RT-DETR rather than train from
-   scratch** (`train.py` docstring) -- backbone transfer, dataset size.
-4. **Why per-class metrics, not just overall mAP** (`evaluate.py` docstring).
-5. **Why no agentic framework in Part B, and what the three-function
-   decision layer actually does** (`reasoning.py` docstring) --
+   scratch** -- backbone transfer, dataset size (2,801 images).
+4. **Why per-class metrics matter** -- Safety Cone (0.764 AP50) is hidden
+   by the strong overall mAP50 (0.9048) unless you look class-by-class.
+5. **Why no agentic framework in Part B** -- three plain functions:
    `needs_detection()` -> `detect()` -> `reason_over_detections()`.
-6. **The specific "insufficient information" example** -- point to the
-   guardrail JSON example above and be ready to explain *why* it triggered
-   (confidence below `LOW_CONFIDENCE_THRESHOLD`, or zero trustworthy boxes).
-7. **Five failure cases** -- these come from YOUR actual evaluation run, not
-   from this repo. You must generate these yourself by looking at real
-   predictions on your test set (see `evaluate.py` output).
+6. **The real "insufficient information" example** -- see Section 4 above,
+   and be ready to explain why it triggered (no Person detections found).
+7. **A real limitation found through testing, not guessed** -- asking
+   about "helmet" instead of "hardhat" doesn't route to the specific
+   Hardhat-violation check, since "helmet" isn't in the synonym list.
+   See memo Section 6.
 
-## 6. Known limitations (say these out loud, don't hide them)
+## 7. Known limitations (stated openly, not hidden)
 
-- `needs_detection()` is keyword/regex-based -- it will misroute unusual
-  phrasings (sarcasm, indirect references, multi-part questions).
-- `reason_over_detections()` has explicit rules for count/violation/most-common
-  questions; anything else falls through to a raw summary flagged as
-  low-confidence, not a targeted answer.
-- Person-to-PPE association is NOT done by box overlap/IoU in this version --
-  violations are reported at the image level ("a NO-Hardhat box exists
-  somewhere"), not per-identified-person. This is a real simplification --
-  acknowledge it as a design trade-off (time-boxed submission) rather than a
-  hidden gap, and it's a good thing to mention as a "if I had more time"
-  improvement in your memo.
+- Person-to-PPE association is at image level, not per-person via box
+  overlap -- a real simplification made under the deadline.
+- Intent routing is keyword-based -- will misroute unusual phrasings.
+- Confidence threshold (0.35) is a reasonable default, not swept/tuned
+  against a precision-recall trade-off for this specific task.
+- Safety Cone detection is the model's clearest weakness (see memo).

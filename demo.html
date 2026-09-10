@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PPE Detection & Reasoning API — Live Demo</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #ffffff;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --green: #16a34a;
+    --green-bg: #ecfdf3;
+    --amber: #b45309;
+    --amber-bg: #fffbeb;
+    --text: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+    background: linear-gradient(180deg, #0f172a 0%, #1e293b 260px, #f1f5f9 260px);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px 60px; }
+  header { padding: 48px 0 28px; color: white; }
+  header .eyebrow {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: #93c5fd; font-weight: 600; margin-bottom: 8px;
+  }
+  header h1 { margin: 0 0 8px; font-size: 28px; font-weight: 700; }
+  header p { margin: 0; color: #cbd5e1; font-size: 14.5px; max-width: 560px; line-height: 1.5; }
+
+  .card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 26px 28px;
+    margin-bottom: 22px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06);
+    border: 1px solid var(--border);
+  }
+  .card h2 {
+    font-size: 15px; margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--accent); color: white; font-size: 12px; font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+  }
+  .upload-zone:hover { border-color: var(--accent); background: #f8fafc; }
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .upload-zone .hint { color: var(--muted); font-size: 13.5px; }
+  .upload-zone .hint b { color: var(--text); }
+
+  #preview {
+    max-width: 100%; max-height: 340px; margin-top: 16px;
+    border-radius: 10px; display: none; border: 1px solid var(--border);
+  }
+
+  input[type=text] {
+    width: 100%; padding: 11px 14px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14.5px; margin-bottom: 14px;
+    font-family: inherit;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+
+  button.primary {
+    background: var(--accent); color: white; border: none;
+    padding: 10px 20px; border-radius: 8px; font-size: 14.5px; font-weight: 600;
+    cursor: pointer; transition: background 0.15s;
+  }
+  button.primary:hover { background: var(--accent-dark); }
+  button.primary:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+  .quick-questions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .chip {
+    background: #f1f5f9; border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; font-size: 13px; cursor: pointer; color: var(--text);
+    transition: background 0.15s;
+  }
+  .chip:hover { background: #e2e8f0; }
+
+  pre.output {
+    background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px;
+    overflow-x: auto; white-space: pre-wrap; font-size: 12.5px; margin-top: 14px;
+    max-height: 260px; overflow-y: auto; line-height: 1.5;
+  }
+  pre.output.empty { color: #64748b; font-style: italic; }
+
+  .answer-banner {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 15px; font-weight: 600; padding: 14px 16px;
+    border-radius: 10px; margin-top: 14px;
+  }
+  .answer-banner.confident { background: var(--green-bg); color: var(--green); }
+  .answer-banner.unsure { background: var(--amber-bg); color: var(--amber); }
+  .answer-banner .icon { font-size: 18px; }
+
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px;
+    border-radius: 5px; background: #dbeafe; color: var(--accent-dark); margin-left: 8px;
+  }
+
+  footer {
+    color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 32px;
+    line-height: 1.6;
+  }
+  footer code {
+    background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">RT-DETR &middot; FastAPI &middot; Reasoning Layer</div>
+    <h1>Constrained PPE Detection &amp; Reasoning API</h1>
+    <p>Upload a construction-site image to run live object detection, then ask a natural-language
+       question and watch the reasoning layer decide whether it can answer confidently.</p>
+  </header>
+
+  <div class="card">
+    <h2><span class="step-num">1</span> Choose an image</h2>
+    <div class="upload-zone" id="dropZone">
+      <input type="file" id="imageInput" accept="image/*" onchange="previewImage()">
+      <div class="hint"><b>Click to browse</b> or drag an image here<br>JPG or PNG, any construction-site photo</div>
+    </div>
+    <img id="preview">
+  </div>
+
+  <div class="card">
+    <h2><span class="step-num">2</span> Run object detection <span class="badge">Part A</span></h2>
+    <button class="primary" onclick="runDetect()" id="detectBtn">Detect Objects</button>
+    <pre class="output empty" id="detectOutput">Results will appear here once you run detection.</pre>
+  </div>
+
+  <div class="card">
+    <h2><span class="step-num">3</span> Ask a question <span class="badge">Part B</span></h2>
+    <div class="quick-questions">
+      <span class="chip" onclick="setQuestion('Is anyone not wearing a helmet?')">Is anyone not wearing a helmet?</span>
+      <span class="chip" onclick="setQuestion('Is anyone not wearing a safety vest?')">Is anyone not wearing a safety vest?</span>
+      <span class="chip" onclick="setQuestion('How many people are in this image?')">How many people?</span>
+      <span class="chip" onclick="setQuestion('What is the most common object here?')">Most common object?</span>
+    </div>
+    <input type="text" id="questionInput" placeholder='Type a question about the image...' value="Is anyone not wearing a helmet?">
+    <button class="primary" onclick="runAsk()" id="askBtn">Ask</button>
+    <div id="askAnswer"></div>
+    <pre class="output empty" id="askOutput">The reasoning layer's answer and raw detections will appear here.</pre>
+  </div>
+
+  <footer>
+    This page calls <code>http://localhost:8000</code> directly &mdash;
+    make sure the API is running: <code>python -m uvicorn api.main:app --reload</code>
+  </footer>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+
+function setQuestion(text) {
+  document.getElementById('questionInput').value = text;
+}
+
+function previewImage() {
+  const file = document.getElementById('imageInput').files[0];
+  if (!file) return;
+  const preview = document.getElementById('preview');
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+}
+
+function setOutput(id, text, isEmpty) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.classList.toggle('empty', !!isEmpty);
+}
+
+async function runDetect() {
+  const file = document.getElementById('imageInput').files[0];
+  if (!file) { alert("Choose an image first."); return; }
+  const btn = document.getElementById('detectBtn');
+  btn.disabled = true; btn.textContent = "Detecting...";
+  const formData = new FormData();
+  formData.append("image", file);
+  formData.append("conf_threshold", "0.3");
+
+  try {
+    const res = await fetch(`${API_BASE}/detect`, { method: "POST", body: formData });
+    const data = await res.json();
+    setOutput('detectOutput', JSON.stringify(data, null, 2), false);
+  } catch (err) {
+    setOutput('detectOutput', "Error: " + err + "\n\nIs the API running at " + API_BASE + "?", false);
+  } finally {
+    btn.disabled = false; btn.textContent = "Detect Objects";
+  }
+}
+
+async function runAsk() {
+  const file = document.getElementById('imageInput').files[0];
+  const question = document.getElementById('questionInput').value;
+  if (!file) { alert("Choose an image first."); return; }
+  const btn = document.getElementById('askBtn');
+  btn.disabled = true; btn.textContent = "Thinking...";
+  const formData = new FormData();
+  formData.append("image", file);
+  formData.append("question", question);
+  document.getElementById('askAnswer').innerHTML = "";
+
+  try {
+    const res = await fetch(`${API_BASE}/ask`, { method: "POST", body: formData });
+    const data = await res.json();
+    setOutput('askOutput', JSON.stringify(data, null, 2), false);
+
+    const banner = document.createElement('div');
+    banner.className = "answer-banner " + (data.confident ? "confident" : "unsure");
+    banner.innerHTML = `<span class="icon">${data.confident ? "✓" : "⚠"}</span><span>${data.answer}</span>`;
+    document.getElementById('askAnswer').appendChild(banner);
+  } catch (err) {
+    setOutput('askOutput', "Error: " + err + "\n\nIs the API running at " + API_BASE + "?", false);
+  } finally {
+    btn.disabled = false; btn.textContent = "Ask";
+  }
+}
+</script>
+
+</body>
+</html>
