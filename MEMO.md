@@ -24,8 +24,13 @@ of using the one that shipped with it (details below).
 
 ## 2. My split strategy
 
-I went with 75/15/10, stratified by each image's *rarest* class (see
-`src/split_dataset.py`), rather than reusing the dataset's original split.
+Because each image may contain multiple object classes, I used a custom
+deterministic split strategy that prioritizes the rarest class present in
+each image when assigning samples to train, validation, and test sets,
+rather than a standard multi-label stratification algorithm. The split
+uses a fixed seed of 42 and produces 75/15/10 proportions (see
+`src/split_dataset.py`).
+
 My reasoning: a plain random split can easily starve a rare class like
 Safety Cone -- which only has 98 images despite 607 total instances --
 out of the validation or test set, which would make its metrics
@@ -35,8 +40,7 @@ validation set risks having too few examples of the rarer classes to get
 a stable per-class mAP while training.
 
 The actual split came out to 2,101 train / 422 validation / 278 test
-images, with seed 42 fixed in both `split_dataset.py` and `train.py` so
-the whole thing is reproducible.
+images.
 
 ## 3. What my evaluation actually showed
 
@@ -65,7 +69,9 @@ Per-class breakdown:
 
 I fine-tuned RT-DETR-l from COCO-pretrained weights for 100 epochs at
 640px, batch size 16, on a single Tesla T4 (Google Colab). The whole run
-took 251.2 minutes.
+took 251.2 minutes. I chose RT-DETR-l (rather than the larger RT-DETR-x)
+because it gave a reasonable balance between accuracy and training time
+on the T4's available VRAM and my submission timeline.
 
 What jumps out immediately is that Safety Cone is clearly my weakest
 class -- 0.764 AP50 and only 0.637 recall, well behind everything else.
@@ -125,7 +131,12 @@ brief's rules (see `api/reasoning.py`):
 2. `reason_over_detections(question, detections)` -- plain Python logic
    handling counting, PPE-violation questions (including the exact example
    from the brief, "is anyone not wearing a helmet?"), and most-common-
-   object questions.
+   object questions. The reasoning layer uses detected PPE-violation
+   classes such as NO-Hardhat, NO-Mask, and NO-Safety Vest as image-level
+   evidence. The current implementation does not establish person-to-PPE
+   ownership, so it does not claim that a particular person is violating
+   PPE requirements -- only that a violation of that type exists
+   somewhere in the image.
 3. A confidence guardrail -- if fewer than one detection clears a 0.35
    confidence threshold, or if a question needs people to be present and
    none are found confidently, I return `confident: false` with an honest
@@ -161,13 +172,17 @@ guessing based on detections that had nothing to do with the question.
   image," but not "worker #2 specifically is missing their vest." With
   more time I'd match each PPE box to its nearest Person box using IoU so
   the answer can point to an actual person.
-- **My intent routing is just keyword matching, not a learned model.** I
-  found this out directly while testing: when I asked "is anyone not
-  wearing a *helmet*?" my system answered about a NO-Safety-Vest
-  violation instead, because "helmet" isn't mapped as a synonym for
-  "Hardhat" in my keyword list. The answer wasn't wrong -- a violation
-  really was found -- but it wasn't checking specifically for the thing I
-  asked about. That's a real gap I'd fix by expanding the synonym list.
+- **My intent routing started as pure keyword matching with a real gap
+  I found through testing.** Asking "is anyone not wearing a *helmet*?"
+  originally returned a NO-Safety-Vest violation instead of checking
+  Hardhat specifically, because "helmet" wasn't mapped as a synonym for
+  "Hardhat." I caught this by testing my own live API, then fixed it by
+  adding a synonym dictionary (`PPE_SYNONYMS` in `api/reasoning.py`)
+  mapping terms like "helmet," "hard hat," and "vest" to their correct
+  dataset class names. I verified the fix by re-running the same
+  question and confirming it now correctly checks only the
+  Hardhat-related classes. My routing is still keyword-based rather than
+  a learned classifier, so unusual phrasings could still slip through.
 - **Safety Cone is my clearest weak spot** (0.764 AP50, 0.637 recall).
   Given more time, I'd look at adding more cone-specific training images
   or trying a different input resolution for that class.
