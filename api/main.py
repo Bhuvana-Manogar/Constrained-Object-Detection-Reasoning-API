@@ -27,6 +27,15 @@ logger = logging.getLogger("ppe-api")
 
 app = FastAPI(title="Constrained PPE Detection & Reasoning API")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
 
