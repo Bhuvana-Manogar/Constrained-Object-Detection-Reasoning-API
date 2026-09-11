@@ -3,56 +3,45 @@
 ## 1. Why this domain and dataset
 
 I chose construction-site PPE (personal protective equipment) compliance
-detection. My dataset is the Construction Site Safety Image Dataset from
-Roboflow Universe (mirrored on Kaggle by snehilsanyal) -- 2,801 images
-across 10 classes: Hardhat, Mask, NO-Hardhat, NO-Mask, NO-Safety Vest,
-Person, Safety Cone, Safety Vest, machinery, and vehicle.
+detection, using the Construction Site Safety Image Dataset from Roboflow
+Universe (mirrored on Kaggle by snehilsanyal) -- 2,801 images across 10
+classes: Hardhat, Mask, NO-Hardhat, NO-Mask, NO-Safety Vest, Person,
+Safety Cone, Safety Vest, machinery, vehicle.
 
-I picked this domain for two reasons. First, at least three of the ten
-classes -- NO-Hardhat, NO-Mask, NO-Safety Vest -- aren't standard COCO
-categories. They encode the *absence* of PPE, which a pretrained COCO
-model has no way to detect, so I couldn't just run an off-the-shelf model
-and call it done. Second, it has an obvious real-world use: flagging
-missing safety gear on a job site in near real time is something that
-actually matters.
+Two reasons for this choice. First, at least three classes -- NO-Hardhat,
+NO-Mask, NO-Safety Vest -- encode the *absence* of PPE. These are not
+native categories in COCO-pretrained RT-DETR's detection classes, so
+fine-tuning on this custom dataset was required rather than optional.
+Second, it has an obvious real-world use: flagging missing safety gear
+on a job site in near real time.
 
-I didn't hand-label anything new -- the dataset came pre-annotated from
-Roboflow. Since this is a fairly well-known public dataset, I wanted my
-submission to reflect my own work rather than just downloading and
-training on it as-is, so I redid the train/val/test split myself instead
-of using the one that shipped with it (details below).
+The dataset came pre-annotated from Roboflow; I did not add new labels.
+I created my own deterministic train/validation/test split so that the
+evaluation protocol was under my control and reproducible, rather than
+using the split that shipped with the dataset (details below).
 
 ## 2. My split strategy
 
 Because each image may contain multiple object classes, I used a custom
-deterministic split strategy that prioritizes the rarest class present in
-each image when assigning samples to train, validation, and test sets,
-rather than a standard multi-label stratification algorithm. The split
-uses a fixed seed of 42 and produces 75/15/10 proportions (see
-`src/split_dataset.py`).
+deterministic split that prioritizes the rarest class present in each
+image when assigning train/val/test, rather than a standard multi-label
+stratification algorithm (see `src/split_dataset.py`). Seed 42, 75/15/10
+proportions.
 
-My reasoning: a plain random split can easily starve a rare class like
-Safety Cone -- which only has 98 images despite 607 total instances --
-out of the validation or test set, which would make its metrics
-unreliable. I picked 15% for validation instead of the more typical 10%
-because with only ~2,800 images spread across 10 classes, a smaller
-validation set risks having too few examples of the rarer classes to get
-a stable per-class mAP while training.
+Reasoning: a plain random split can starve a rare class like Safety Cone
+out of validation/test, making its metrics unreliable. I used 15% for
+validation (not the more typical 10%) because with only ~2,800 images
+across 10 classes, a smaller val set risks too few rare-class examples
+for a stable per-class mAP during training.
 
-The actual split came out to 2,101 train / 422 validation / 278 test
-images.
+Actual result: 2,101 train / 422 validation / 278 test images.
 
 ## 3. What my evaluation actually showed
 
-Here's what I got on the held-out test set (278 images the model never
-saw during training or validation):
+Held-out test set (278 images, never seen in training or validation):
 
-- Overall mAP50-95: **0.6624**
-- Overall mAP50: **0.9048**
-- Precision (mean): 0.9184
-- Recall (mean): 0.8652
-
-Per-class breakdown:
+- Overall mAP50-95: **0.6624** | mAP50: **0.9048**
+- Precision (mean): 0.9184 | Recall (mean): 0.8652
 
 | Class | AP50 | Precision | Recall |
 |---|---|---|---|
@@ -67,92 +56,86 @@ Per-class breakdown:
 | machinery | 0.973 | 0.950 | 0.946 |
 | vehicle | 0.882 | 0.868 | 0.855 |
 
-I fine-tuned RT-DETR-l from COCO-pretrained weights for 100 epochs at
-640px, batch size 16, on a single Tesla T4 (Google Colab). The whole run
-took 251.2 minutes. I chose RT-DETR-l (rather than the larger RT-DETR-x)
-because it gave a reasonable balance between accuracy and training time
-on the T4's available VRAM and my submission timeline.
+RT-DETR-l, fine-tuned from COCO-pretrained weights, 100 epochs, 640px,
+batch 16, single Tesla T4 (Colab), 251.2 minutes. I chose RT-DETR-l over
+the larger RT-DETR-x for a better accuracy/training-time balance given
+the T4's VRAM and my timeline.
 
-What jumps out immediately is that Safety Cone is clearly my weakest
-class -- 0.764 AP50 and only 0.637 recall, well behind everything else.
-That tells me the model is missing more than a third of the real cones
-in my test set.
+Safety Cone is clearly my weakest class by AP50 (0.764) and recall
+(0.637). Section 4 breaks down exactly what's driving this.
 
-What these numbers *don't* tell me: how the model will actually perform
-on RAP's hidden evaluation set, since that data could look different in
-lighting, angle, or site type than what I trained on. They also don't
-tell me whether the system correctly attributes a specific violation to
-a specific worker -- my current design doesn't do that (more on this in
-Section 6).
+What these numbers don't tell me: how the model performs on RAP's hidden
+eval set (which may differ in lighting/angle/site type), or whether a
+specific violation is attributed to a specific worker -- my design
+doesn't do that (Section 5).
 
 ## 4. Five things my model gets wrong, and why
 
-I pulled these from the confusion matrix on my test set
-(`results/confusion_matrix.png`):
+Pulled from the confusion matrix on my test set
+(`results/confusion_matrix.png`), read precisely: the "background" row
+shows missed detections (false negatives); each class's "background"
+column entry shows hallucinated detections (false positives -- something
+predicted where nothing was actually there).
 
-**1. Safety Cone gets missed a lot.** 348 cones were correctly caught,
-but 196 real cones (36%) were missed entirely and read as background
-instead. My guess: cones are small and visually simple, and this class
-has the fewest training images (98) of any class despite having 607
-total instances -- so the model just hasn't seen enough variety of cone
-angles and distances to generalize well.
+**1. Safety Cone's main problem is false alarms, not misses.** 348 cones
+correctly detected, only 69 real cones missed (a ~16.5% miss rate
+against 417 true test-set instances) -- but the model hallucinated a
+cone where none existed 196 times, the second-highest false-positive
+count of any class. Likely cause: small, visually simple objects like
+warning signage or stacked materials getting mistaken for cones.
 
-**2. Person detection struggles in crowded scenes.** 910 people were
-caught correctly, but 201 were missed. Since Person is my best-represented
-class by far (1,443 instances), I don't think this is a data problem --
-it's more likely occlusion, where workers get partially hidden behind
-machinery, vehicles, or each other in busy site photos.
+**2. Person has the highest false-positive count of any class (201).**
+Even though Person is otherwise my best-detected class (910 correct, only
+49 missed), the model hallucinates a person 201 times -- more than any
+other class. Likely cause: partial human-like shapes (reflections,
+heavily occluded limbs, people partially hidden behind machinery)
+getting flagged as full detections.
 
-**3. The model sometimes "sees" cones that aren't there.** Background was
-misread as Safety Cone 69 times -- the highest false-positive count of
-any class. My best guess is visual similarity to other small,
-brightly-colored objects on a site -- warning signage, stacked materials,
-that kind of thing.
+**3. Person also has real missed detections in busy scenes (49).**
+Given how well-represented and otherwise accurate this class is, these
+misses are more likely occlusion in crowded site photos than a data
+scarcity issue.
 
-**4. Same pattern with Person, less often.** Background was misread as
-Person 49 times. Could be partial human shapes -- mannequins, reflections,
-heavily occluded limbs -- that look "person-like" enough to fool it.
+**4. Safety Vest shows the same false-positive/miss imbalance at a
+smaller scale.** 71 false positives vs. 18 misses -- consistent with
+bright, simple, PPE-adjacent objects being over-triggered on across
+multiple classes, not just cones.
 
-**5. Cone recall stays weak even when I loosen the confidence bar.**
-Looking at the Recall-Confidence curve (`results/BoxR_curve.png`), Safety
-Cone's line sits noticeably below every other class across the whole
-range, capping out around 0.65-0.7 recall even at low thresholds, where
-other classes reach 0.85+ easily. That tells me this isn't just a
-threshold-tuning issue -- the model genuinely struggles to detect cones
-in the first place.
+**5. My per-class recall table and the confusion matrix don't agree
+exactly, and I want to be upfront about why.** evaluate.py reports
+Safety Cone recall at 0.637, but the confusion matrix implies
+348/417 = 0.834. These come from different evaluation methodologies --
+the confusion matrix is computed at a single fixed confidence/IoU
+threshold, while the per-class AP/recall table integrates across the
+full precision-recall curve. Both are legitimate, but they aren't
+directly comparable numbers, and I haven't reconciled them into one
+unified count.
 
 ## 5. How my reasoning layer decides when to call the detector
 
-I built this as three plain Python functions -- no framework, per the
-brief's rules (see `api/reasoning.py`):
+Three plain Python functions, no framework (`api/reasoning.py`):
 
-1. `needs_detection(question)` -- a keyword/regex check that decides if a
-   question is even about the image at all.
-2. `reason_over_detections(question, detections)` -- plain Python logic
-   handling counting, PPE-violation questions (including the exact example
-   from the brief, "is anyone not wearing a helmet?"), and most-common-
-   object questions. The reasoning layer uses detected PPE-violation
-   classes such as NO-Hardhat, NO-Mask, and NO-Safety Vest as image-level
-   evidence. The current implementation does not establish person-to-PPE
-   ownership, so it does not claim that a particular person is violating
-   PPE requirements -- only that a violation of that type exists
-   somewhere in the image.
-3. A confidence guardrail -- if fewer than one detection clears a 0.35
-   confidence threshold, or if a question needs people to be present and
-   none are found confidently, I return `confident: false` with an honest
-   explanation instead of guessing.
+1. `needs_detection(question)` -- keyword/regex check for whether a
+   question is about the image at all.
+2. `reason_over_detections(question, detections)` -- handles counting,
+   PPE-violation questions (including the brief's own example, "is
+   anyone not wearing a helmet?"), and most-common-object questions.
+   It uses violation classes like NO-Hardhat/NO-Mask/NO-Safety Vest as
+   *image-level* evidence only -- it does not establish person-to-PPE
+   ownership, so it never claims a specific person is non-compliant.
+3. A confidence guardrail: it rejects an answer when no relevant
+   detection exceeds a 0.35 confidence threshold. For people-dependent
+   questions, it additionally requires at least one sufficiently
+   confident Person detection before answering.
 
-Here's a real example I captured directly from my running API, using my
-actual trained weights, not a made-up one:
+Real example, captured live from my running API:
 
 ```
 Question: "Is anyone not wearing a safety vest?"
-Image: airport_inside_0073_jpg.rf.405ba1048616d99ee5168b6affb4938e.jpg
-       (a non-construction image included in the dataset as a negative
-       example)
+Image: airport_inside_0073_...jpg (a non-construction negative example)
 Response: {
   "used_detector": true,
-  "raw_detections": [5 "machinery" detections, 0 "Person" detections],
+  "raw_detections": [5 "machinery", 0 "Person"],
   "answer": "I don't have enough confident detection evidence to answer
              this reliably. (No people detected in the image with
              sufficient confidence to answer.)",
@@ -160,34 +143,26 @@ Response: {
 }
 ```
 
-The detector found some machinery-like objects but no people at all.
-Since the question is asking about people's PPE compliance, my system
-correctly recognized it had nothing to go on and said so, instead of
-guessing based on detections that had nothing to do with the question.
+No people were detected, so the system correctly said it couldn't answer
+a people-focused question, rather than guessing from unrelated detections.
 
-## 6. What I know is still weak, and what I'd fix with more time
+## 6. What's still weak, and what I'd fix with more time
 
-- **I'm not linking specific PPE violations to specific people.** Right
-  now my system can say "there's a NO-Safety-Vest box somewhere in this
-  image," but not "worker #2 specifically is missing their vest." With
-  more time I'd match each PPE box to its nearest Person box using IoU so
-  the answer can point to an actual person.
-- **My intent routing started as pure keyword matching with a real gap
-  I found through testing.** Asking "is anyone not wearing a *helmet*?"
-  originally returned a NO-Safety-Vest violation instead of checking
-  Hardhat specifically, because "helmet" wasn't mapped as a synonym for
-  "Hardhat." I caught this by testing my own live API, then fixed it by
-  adding a synonym dictionary (`PPE_SYNONYMS` in `api/reasoning.py`)
-  mapping terms like "helmet," "hard hat," and "vest" to their correct
-  dataset class names. I verified the fix by re-running the same
-  question and confirming it now correctly checks only the
-  Hardhat-related classes. My routing is still keyword-based rather than
-  a learned classifier, so unusual phrasings could still slip through.
-- **Safety Cone is my clearest weak spot** (0.764 AP50, 0.637 recall).
-  Given more time, I'd look at adding more cone-specific training images
-  or trying a different input resolution for that class.
-- **My 0.35 confidence threshold is a reasonable starting point, not
-  something I actually tuned.** I didn't sweep it against the
-  precision/recall trade-off for this specific task -- a more careful
-  version would tune this per class instead of using one number
-  everywhere.
+- **No person-to-PPE attribution.** I can say "a NO-Safety-Vest box
+  exists," not "worker #2 lacks a vest." If asked directly: the detector
+  produces separate Person and NO-Safety-Vest boxes, but I haven't
+  implemented person-to-PPE association, so my reasoning layer treats
+  violations as image-level evidence rather than attributing them to a
+  specific person. I'd add IoU-based matching between PPE boxes and
+  Person boxes as the next step.
+- **A real bug I found and fixed by testing my own API:** asking about a
+  "helmet" originally returned a NO-Safety-Vest violation instead of
+  checking Hardhat specifically, since "helmet" wasn't mapped to
+  "Hardhat." I fixed it with a synonym dictionary (`PPE_SYNONYMS` in
+  `api/reasoning.py`) and verified the fix live. Routing is still
+  keyword-based, so unusual phrasings could still slip through.
+- **Safety Cone's dominant issue is false positives, not misses** (see
+  Section 4) -- more time would go toward reducing confusion with
+  visually similar site clutter, not just adding more training images.
+- **My 0.35 confidence threshold is a reasonable default, not tuned**
+  against a precision/recall trade-off for this task specifically.
