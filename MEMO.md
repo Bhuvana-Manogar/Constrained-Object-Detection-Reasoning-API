@@ -77,12 +77,21 @@ shows missed detections (false negatives); each class's "background"
 column entry shows hallucinated detections (false positives -- something
 predicted where nothing was actually there).
 
-**1. Safety Cone's main problem is false alarms, not misses.** 348 cones
-correctly detected, only 69 real cones missed (a ~16.5% miss rate
-against 417 true test-set instances) -- but the model hallucinated a
-cone where none existed 196 times, the second-highest false-positive
-count of any class. Likely cause: small, visually simple objects like
-warning signage or stacked materials getting mistaken for cones.
+**1. Safety Cone's main problem is false alarms, not misses.** Per the
+confusion matrix, 348 cones were correctly detected and 69 were missed
+(read as background). The model also hallucinated a cone where none
+existed 196 times -- the second-highest false-positive count of any
+class, and notably higher than its miss count. I want to flag a real
+inconsistency I found rather than hide it: my raw test-set label files
+show 371 actual Safety Cone instances, which doesn't exactly match
+348+69=417 from the confusion matrix. I believe this is a byproduct of
+how the confusion matrix tool handles multiple/overlapping predicted
+boxes per ground-truth object, but I haven't fully traced the exact
+cause. Regardless of the precise instance count, the qualitative
+finding holds across all three sources: false positives clearly
+outnumber misses for this class. Likely cause of the false positives:
+small, visually simple objects like warning signage or stacked
+materials getting mistaken for cones.
 
 **2. Person has the highest false-positive count of any class (201).**
 Even though Person is otherwise my best-detected class (910 correct, only
