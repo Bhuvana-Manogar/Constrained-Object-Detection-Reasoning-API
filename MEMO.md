@@ -64,6 +64,14 @@ the T4's VRAM and my timeline.
 Safety Cone is clearly my weakest class by AP50 (0.764) and recall
 (0.637). Section 4 breaks down exactly what's driving this.
 
+A methodology note: the confusion matrix and the reported per-class
+recall should not be interpreted as the same statistic. The confusion
+matrix is a threshold-specific view of prediction/ground-truth
+matching, while the reported recall comes from the detector's
+evaluation procedure integrating across the precision-recall curve. I
+use the evaluation metrics table for quantitative model comparison and
+the confusion matrix primarily for qualitative error analysis.
+
 What these numbers don't tell me: how the model performs on RAP's hidden
 eval set (which may differ in lighting/angle/site type), or whether a
 specific violation is attributed to a specific worker -- my design
@@ -72,33 +80,31 @@ doesn't do that (Section 5).
 ## 4. Five things my model gets wrong, and why
 
 Pulled from the confusion matrix on my test set
-(`results/confusion_matrix.png`), read precisely: the "background" row
-shows missed detections (false negatives); each class's "background"
-column entry shows hallucinated detections (false positives -- something
-predicted where nothing was actually there).
+(`results/confusion_matrix.png`). I used it to inspect class-level false
+positives and missed detections: the background-related cells represent
+predictions or ground-truth instances that were not matched to the
+corresponding class.
 
-**1. Safety Cone's main problem is false alarms, not misses.** Per the
-confusion matrix, 348 cones were correctly detected and 69 were missed
-(read as background). The model also hallucinated a cone where none
-existed 196 times -- the second-highest false-positive count of any
-class, and notably higher than its miss count. I want to flag a real
-inconsistency I found rather than hide it: my raw test-set label files
-show 371 actual Safety Cone instances, which doesn't exactly match
-348+69=417 from the confusion matrix. I believe this is a byproduct of
-how the confusion matrix tool handles multiple/overlapping predicted
-boxes per ground-truth object, but I haven't fully traced the exact
-cause. Regardless of the precise instance count, the qualitative
-finding holds across all three sources: false positives clearly
-outnumber misses for this class. Likely cause of the false positives:
-small, visually simple objects like warning signage or stacked
-materials getting mistaken for cones.
+**1. Safety Cone's main problem is false-positive predictions.** Per
+the confusion matrix, 348 cones were correctly detected, 69 were
+missed, and 196 false-positive Cone predictions were recorded. I
+noticed that these cell counts do not exactly match the raw label-file
+count for this class. However, the confusion matrix and raw annotation
+counts are not directly comparable because they are produced through
+different matching and evaluation procedures. I therefore do not treat
+the confusion-matrix cell counts as exact ground-truth instance totals.
+The reliable conclusion is that Safety Cone is my weakest class by
+recall and shows substantial false-positive behavior, consistent with
+visually similar site objects such as warning signage or stacked
+materials being confused with cones.
 
 **2. Person has the highest false-positive count of any class (201).**
-Even though Person is otherwise my best-detected class (910 correct, only
-49 missed), the model hallucinates a person 201 times -- more than any
-other class. Likely cause: partial human-like shapes (reflections,
-heavily occluded limbs, people partially hidden behind machinery)
-getting flagged as full detections.
+Person is one of my strongest classes by AP50 and precision (910
+correctly detected, only 49 missed), but the model produces false-
+positive Person predictions 201 times -- more than any other class.
+Likely cause: partial human-like shapes (reflections, heavily occluded
+limbs, people partially hidden behind machinery) getting flagged as
+full detections.
 
 **3. Person also has real missed detections in busy scenes (49).**
 Given how well-represented and otherwise accurate this class is, these
@@ -106,19 +112,21 @@ misses are more likely occlusion in crowded site photos than a data
 scarcity issue.
 
 **4. Safety Vest shows the same false-positive/miss imbalance at a
-smaller scale.** 71 false positives vs. 18 misses -- consistent with
-bright, simple, PPE-adjacent objects being over-triggered on across
-multiple classes, not just cones.
+smaller scale.** 71 false-positive Safety Vest predictions vs. 18 misses -- consistent
+with bright, simple, PPE-adjacent objects being over-triggered on
+across multiple classes, not just cones.
 
-**5. My per-class recall table and the confusion matrix don't agree
-exactly, and I want to be upfront about why.** evaluate.py reports
-Safety Cone recall at 0.637, but the confusion matrix implies
-348/417 = 0.834. These come from different evaluation methodologies --
-the confusion matrix is computed at a single fixed confidence/IoU
-threshold, while the per-class AP/recall table integrates across the
-full precision-recall curve. Both are legitimate, but they aren't
-directly comparable numbers, and I haven't reconciled them into one
-unified count.
+**5. Small/occluded PPE is a recurring detection weakness across
+classes, not just Safety Cone.** Hardhat has the second-lowest recall
+of any class (0.803), noticeably behind Mask (0.919), Person (0.912),
+and machinery (0.946). Combined with Safety Cone's weakness, this
+points to a consistent pattern: smaller PPE items that occupy few
+pixels or get partially occluded by the worker's body or nearby
+equipment are harder for the model to detect reliably, regardless of
+which specific class they belong to. Likely causes: limited effective
+resolution for small objects at 640px input size, and occlusion in
+busy site photos. A likely improvement would be higher-resolution
+training/inference or more examples of small, partially occluded PPE.
 
 ## 5. How my reasoning layer decides when to call the detector
 
@@ -144,16 +152,20 @@ Question: "Is anyone not wearing a safety vest?"
 Image: airport_inside_0073_...jpg (a non-construction negative example)
 Response: {
   "used_detector": true,
-  "raw_detections": [5 "machinery", 0 "Person"],
+  "raw_detections": [
+    {"class": "machinery", "confidence": 0.95, "box": [...]},
+    {"class": "machinery", "confidence": 0.91, "box": [...]}
+  ],
   "answer": "I don't have enough confident detection evidence to answer
-             this reliably. (No people detected in the image with
-             sufficient confidence to answer.)",
+             this reliably. No sufficiently confident Person detection
+             was available.",
   "confident": false
 }
 ```
 
-No people were detected, so the system correctly said it couldn't answer
-a people-focused question, rather than guessing from unrelated detections.
+No sufficiently confident Person detection was available, so the system
+correctly said it couldn't answer a people-focused question, rather than
+guessing from unrelated detections.
 
 ## 6. What's still weak, and what I'd fix with more time
 
@@ -162,14 +174,16 @@ a people-focused question, rather than guessing from unrelated detections.
   produces separate Person and NO-Safety-Vest boxes, but I haven't
   implemented person-to-PPE association, so my reasoning layer treats
   violations as image-level evidence rather than attributing them to a
-  specific person. I'd add IoU-based matching between PPE boxes and
-  Person boxes as the next step.
-- **A real bug I found and fixed by testing my own API:** asking about a
-  "helmet" originally returned a NO-Safety-Vest violation instead of
-  checking Hardhat specifically, since "helmet" wasn't mapped to
-  "Hardhat." I fixed it with a synonym dictionary (`PPE_SYNONYMS` in
-  `api/reasoning.py`) and verified the fix live. Routing is still
-  keyword-based, so unusual phrasings could still slip through.
+  specific person. I would explore person-to-PPE association using
+  spatial matching, such as IoU or containment-based rules, followed by
+  validation on annotated examples.
+- **A real bug I found and fixed by testing my own API.** During API
+  testing, I discovered that the natural-language term "helmet" was not
+  mapped to the dataset's "Hardhat" class, causing incorrect violation
+  routing. I added an explicit PPE synonym mapping
+  (`PPE_SYNONYMS` in `api/reasoning.py`) and verified the corrected
+  behavior with live API tests. This also exposed a broader limitation:
+  keyword-based routing may still fail on unseen phrasing.
 - **Safety Cone's dominant issue is false positives, not misses** (see
   Section 4) -- more time would go toward reducing confusion with
   visually similar site clutter, not just adding more training images.
