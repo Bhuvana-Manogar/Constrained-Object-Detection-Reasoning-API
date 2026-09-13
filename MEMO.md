@@ -85,31 +85,30 @@ positives and missed detections: the background-related cells represent
 predictions or ground-truth instances that were not matched to the
 corresponding class.
 
-**1. Safety Cone's main problem is false-positive predictions.** Per
-the confusion matrix, 348 cones were correctly detected, 69 were
-missed, and 196 false-positive Cone predictions were recorded. I
-noticed that these cell counts do not exactly match the raw label-file
-count for this class. However, the confusion matrix and raw annotation
-counts are not directly comparable because they are produced through
-different matching and evaluation procedures. I therefore do not treat
-the confusion-matrix cell counts as exact ground-truth instance totals.
-The reliable conclusion is that Safety Cone is my weakest class by
-recall and shows substantial false-positive behavior, consistent with
-visually similar site objects such as warning signage or stacked
-materials being confused with cones.
+**1. Safety Cone shows substantial false-positive behavior.** The
+confusion matrix contains 348 correctly matched cone predictions, 69
+missed cone instances, and 196 false-positive cone predictions.
+However, these cell counts do not exactly match the raw Safety Cone
+annotation count. Therefore, I do not treat the confusion-matrix
+totals as exact ground-truth instance totals. The reliable conclusion
+is that Safety Cone is my weakest class by recall and shows substantial
+false-positive behavior, consistent with visually similar site objects
+such as warning signage or stacked materials being confused with
+cones.
 
 **2. Person has the highest false-positive count of any class (201).**
-Person is one of my strongest classes by AP50 and precision (910
-correctly detected, only 49 missed), but the model produces false-
-positive Person predictions 201 times -- more than any other class.
-Likely cause: partial human-like shapes (reflections, heavily occluded
-limbs, people partially hidden behind machinery) getting flagged as
-full detections.
+Person is one of my strongest classes by AP50 and precision. However,
+the confusion matrix contains 201 false-positive Person predictions,
+more than any other class. Possible causes include partial human-like
+shapes, reflections, heavily occluded limbs, and people partially
+hidden behind machinery being interpreted as complete Person
+detections.
 
-**3. Person also has real missed detections in busy scenes (49).**
-Given how well-represented and otherwise accurate this class is, these
-misses are more likely occlusion in crowded site photos than a data
-scarcity issue.
+**3. Person also has missed detections in busy scenes (49).** These
+misses are likely related to occlusion, crowding, and partial
+visibility in complex construction-site images. Since Person is well
+represented and otherwise performs strongly, the evidence points more
+toward scene complexity than simple class scarcity.
 
 **4. Safety Vest shows the same false-positive/miss imbalance at a
 smaller scale.** 71 false-positive Safety Vest predictions vs. 18 misses -- consistent
@@ -147,14 +146,18 @@ Three plain Python functions, no framework (`api/reasoning.py`):
 
 Real example, captured live from my running API:
 
-```
 Question: "Is anyone not wearing a safety vest?"
+
 Image: airport_inside_0073_...jpg (a non-construction negative example)
-Response: {
+
+Response:
+
+```
+{
   "used_detector": true,
   "raw_detections": [
-    {"class": "machinery", "confidence": 0.95, "box": [...]},
-    {"class": "machinery", "confidence": 0.91, "box": [...]}
+    {"class": "machinery", "confidence": 0.95},
+    {"class": "machinery", "confidence": 0.91}
   ],
   "answer": "I don't have enough confident detection evidence to answer
              this reliably. No sufficiently confident Person detection
@@ -169,21 +172,22 @@ guessing from unrelated detections.
 
 ## 6. What's still weak, and what I'd fix with more time
 
-- **No person-to-PPE attribution.** I can say "a NO-Safety-Vest box
-  exists," not "worker #2 lacks a vest." If asked directly: the detector
-  produces separate Person and NO-Safety-Vest boxes, but I haven't
-  implemented person-to-PPE association, so my reasoning layer treats
-  violations as image-level evidence rather than attributing them to a
-  specific person. I would explore person-to-PPE association using
-  spatial matching, such as IoU or containment-based rules, followed by
-  validation on annotated examples.
-- **A real bug I found and fixed by testing my own API.** During API
-  testing, I discovered that the natural-language term "helmet" was not
-  mapped to the dataset's "Hardhat" class, causing incorrect violation
-  routing. I added an explicit PPE synonym mapping
+- **No person-to-PPE attribution.** I can report that a
+  `NO-Safety Vest` box exists, but I cannot determine which specific
+  worker it belongs to. The detector produces separate Person and
+  PPE-related boxes, and the reasoning layer treats violations as
+  image-level evidence rather than attributing them to an individual.
+  I would explore person-to-PPE association using spatial matching,
+  such as IoU or containment-based rules, followed by validation on
+  annotated examples.
+- **A routing bug discovered and fixed during API testing.** During
+  testing, I discovered that the natural-language term "helmet" was
+  initially not mapped to the dataset's "Hardhat" class, causing
+  incorrect PPE-violation routing. I added an explicit synonym mapping
   (`PPE_SYNONYMS` in `api/reasoning.py`) and verified the corrected
-  behavior with live API tests. This also exposed a broader limitation:
-  keyword-based routing may still fail on unseen phrasing.
+  behavior with live API tests. Keyword-based routing remains a
+  limitation because unusual or indirect phrasings may still be
+  missed.
 - **Safety Cone's dominant issue is false positives, not misses** (see
   Section 4) -- more time would go toward reducing confusion with
   visually similar site clutter, not just adding more training images.
